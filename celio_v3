@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Agar.io Pro Clone - Technical Accurate Edition</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #f2fbff; font-family: 'Ubuntu', sans-serif; cursor: none; }
+        canvas { display: block; }
+        #hud { position: absolute; top: 20px; left: 20px; color: #555; pointer-events: none; }
+        #leaderboard { position: absolute; top: 20px; right: 20px; background: rgba(255,255,255,0.7); padding: 10px; border-radius: 5px; min-width: 150px; color: #444; font-size: 14px; }
+        .score-val { font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div id="hud">
+    <div class="score-val">Score: <span id="score">0</span></div>
+</div>
+<div id="leaderboard">
+    <div style="font-weight:bold; border-bottom:1px solid #ccc; margin-bottom:5px;">Leaderboard</div>
+    <div id="lb-content"></div>
+</div>
+
+anvas id="game"></canvas>
+
+<script>
+/**
+ * AGAR.IO TECHNICAL CLONE
+ * Key Formulas Implemented:
+ * - Mass = Radius^2
+ * - Speed = BaseSpeed / sqrt(Mass)
+ * - Impulse Decay = Exponential
+ * - Delta Time (dt) Scaling
+ */
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// --- KONFIGURATION ---
+const WORLD_SIZE = 5000;
+const INITIAL_MASS = 200;
+const MIN_SPLIT_MASS = 400;
+const MAX_PIECES = 16;
+const FOOD_COUNT = 1000;
+const VIRUS_COUNT = 30;
+const VIRUS_MASS = 1000;
+const BASE_SPEED = 180;
+const EJECT_MASS = 35;
+const EJECT_LOSS = 40;
+const DECAY_RATE = 0.002; // Massenverlust pro Sekunde
+
+const COLORS = ['#33ff33', '#3333ff', '#ff3333', '#ffff33', '#ff33ff', '#33ffff', '#ff9900'];
+
+// --- STATE ---
+let lastTime = Date.now();
+let mouseX = 0, mouseY = 0;
+let playerCells = [];
+let bots = [];
+let foods = [];
+let viruses = [];
+let ejectedMasses = [];
+let camera = { x: WORLD_SIZE/2, y: WORLD_SIZE/2, zoom: 1 };
+
+// --- HELFER ---
+const getRadius = (mass) => Math.sqrt(mass);
+const getSpeed = (mass) => BASE_SPEED / Math.pow(mass, 0.45);
+
+class Cell {
+    constructor(x, y, mass, color, name, isPlayer = false) {
+        this.x = x;
+        this.y = y;
+        this.mass = mass;
+        this.color = color;
+        this.name = name;
+        this.isPlayer = isPlayer;
+        this.boostX = 0;
+        this.boostY = 0;
+        this.mergeTimer = 0; // Cooldown bis zum Wiedervereinen
+    }
+
+    update(dt, targetX, targetY) {
+        const r = getRadius(this.mass);
+        const s = getSpeed(this.mass);
+        
+        // 1. Movement Logic (Target-based)
+        if (targetX !== undefined) {
+            const dx = targetX - this.x;
+            const dy = targetY - this.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist > 1) {
+                this.x += (dx / dist) * s * dt;
+                this.y += (dy / dist) * s * dt;
+            }
+        }
+
+        // 2. Impulse Physics (Splits/Ejects)
+        this.x += this.boostX * dt;
+        this.y += this.boostY * dt;
+        this.boostX *= Math.pow(0.1, dt); // Schneller Decay (Reibung)
+        this.boostY *= Math.pow(0.1, dt);
+
+        // 3. World Constraints
+        this.x = Math.max(r, Math.min(WORLD_SIZE - r, this.x));
+        this.y = Math.max(r, Math.min(WORLD_SIZE - r, this.y));
+
+        // 4. Mass Decay
+        if (this.mass > INITIAL_MASS) {
+            this.mass -= this.mass * DECAY_RATE * dt;
+        }
+
+        // 5. Merge Timer
+        if (this.mergeTimer > 0) this.mergeTimer -= dt;
+    }
+
+    draw() {
+        const r = getRadius(this.mass);
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        
+        // Zelle zeichnen
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, Math.PI * 2);
+        ctx.fillStyle = this.color;
+        ctx.fill();
+        
+        // Border (Dunklerer Ton der Hauptfarbe)
+        ctx.lineWidth = r * 0.05;
+        ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+        ctx.stroke();
+
+        // Name & Mass
+        if (r > 10) {
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'center';
+            ctx.font = `bold ${r * 0.4}px Ubuntu`;
+            ctx.fillText(this.name, 0, r * 0.1);
+            if (r > 20) {
+                ctx.font = `${r * 0.25}px Ubuntu`;
+                ctx.fillText(Math.floor(this.mass), 0, r * 0.4);
+            }
+        }
+        ctx.restore();
+    }
+}
+
+// --- INITIALISIERUNG ---
+function init() {
+    // Player
+    playerCells.push(new Cell(WORLD_SIZE/2, WORLD_SIZE/2, INITIAL_MASS, '#ff3333', 'You', true));
+    
+    // Food
+    for(let i=0; i<FOOD_COUNT; i++) spawnFood();
+    
+    // Viren
+    for(let i=0; i<VIRUS_COUNT; i++) {
+        viruses.push({ x: Math.random()*WORLD_SIZE, y: Math.random()*WORLD_SIZE, mass: VIRUS_MASS });
+    }
+
+    // Bots (Simple AI)
+    for(let i=0; i<10; i++) {
+        const botCell = new Cell(Math.random()*WORLD_SIZE, Math.random()*WORLD_SIZE, INITIAL_MASS, COLORS[i%COLORS.length], 'Bot '+i);
+        bots.push(botCell);
+    }
+}
+
+function spawnFood() {
+    foods.push({
+        x: Math.random() * WORLD_SIZE,
+        y: Math.random() * WORLD_SIZE,
+        c: COLORS[Math.floor(Math.random() * COLORS.length)],
+        m: 10
+    });
+}
+
+// --- LOGIK ---
+function update() {
+    const now = Date.now();
+    const dt = (now - lastTime) / 1000;
+    lastTime = now;
+
+    // 1. Camera Smoothing
+    if (playerCells.length > 0) {
+        let avgX = 0, avgY = 0, totalM = 0;
+        playerCells.forEach(c => { avgX += c.x; avgY += c.y; totalM += c.mass; });
+        camera.x += (avgX / playerCells.length - camera.x) * 0.1;
+        camera.y += (avgY / playerCells.length - camera.y) * 0.1;
+        
+        // Zoom-Formel: Je größer die Ausdehnung der Zellen, desto weiter rauszoomen
+        camera.zoom += (1 / Math.pow(totalM / 500, 0.3) - camera.zoom) * 0.05;
+    }
+
+    // 2. Player Update (Relative to Mouse)
+    const worldMouseX = (mouseX - canvas.width/2) / camera.zoom + camera.x;
+    const worldMouseY = (mouseY - canvas.height/2) / camera.zoom + camera.y;
+    
+    playerCells.forEach(c => c.update(dt, worldMouseX, worldMouseY));
+    
+    // 3. Bot Update
+    bots.forEach(b => {
+        // Simple AI: Läuft zum nächsten Food
+        b.update(dt, b.x + (Math.random()-0.5)*100, b.y + (Math.random()-0.5)*100);
+    });
+
+    // 4. Collision & Eating Logic
+    checkCollisions();
+
+    // 5. Ejected Mass Update
+    ejectedMasses.forEach((m, i) => {
+        m.x += m.vx * dt;
+        m.y += m.vy * dt;
+        m.vx *= Math.pow(0.1, dt);
+        m.vy *= Math.pow(0.1, dt);
+        if (Math.hypot(m.vx, m.vy) < 10) m.vx = m.vy = 0;
+    });
+
+    // UI Score
+    document.getElementById('score').innerText = Math.floor(playerCells.reduce((a,b) => a + b.mass, 0));
+}
+
+function checkCollisions() {
+    const allCells = [...playerCells, ...bots];
+    
+    // Food eating
+    allCells.forEach(c => {
+        const r = getRadius(c.mass);
+        for(let i=foods.length-1; i>=0; i--) {
+            if (Math.hypot(c.x - foods[i].x, c.y - foods[i].y) < r) {
+                c.mass += foods[i].m;
+                foods.splice(i, 1);
+                spawnFood();
+            }
+        }
+    });
+
+    // Virus Explosion
+    allCells.forEach(c => {
+        const r = getRadius(c.mass);
+        viruses.forEach(v => {
+            const vr = getRadius(v.mass);
+            if (c.mass > v.mass * 1.2 && Math.hypot(c.x - v.x, c.y - v.y) < r) {
+                explode(c);
+                // Virus wird "konsumiert" oder bleibt stehen - in Agar.io bleibt er meist, 
+                // aber die Zelle splittet sich in viele Teile.
+            }
+        });
+    });
+
+    // Cell eating Cell
+    for(let i=allCells.length-1; i>=0; i--) {
+        for(let j=allCells.length-1; j>=0; j--) {
+            if (i === j) continue;
+            let a = allCells[i], b = allCells[j];
+            const dist = Math.hypot(a.x - b.x, a.y - b.y);
+            const ra = getRadius(a.mass);
+            const rb = getRadius(b.mass);
+
+            // Gleicher Besitzer? (Merge Logic)
+            if (a.name === b.name && a.isPlayer === b.isPlayer) {
+                if (a.mergeTimer <= 0 && b.mergeTimer <= 0 && dist < ra * 0.5) {
+                    a.mass += b.mass;
+                    // B entfernen
+                    if (a.isPlayer) playerCells.splice(playerCells.indexOf(b), 1);
+                    else bots.splice(bots.indexOf(b), 1);
+                    return;
+                }
+                // Überlappungs-Schutz (Stoßen sich ab wenn sie nicht mergen können)
+                if (dist < ra + rb) {
+                    const angle = Math.atan2(b.y - a.y, b.x - a.x);
+                    const force = (ra + rb - dist) * 0.05;
+                    b.x += Math.cos(angle) * force;
+                    b.y += Math.sin(angle) * force;
+                }
+            } else {
+                // Fremde Zellen (Eating Logic)
+                if (a.mass > b.mass * 1.2 && dist < ra - rb * 0.4) {
+                    a.mass += b.mass;
+                    if (b.isPlayer) playerCells.splice(playerCells.indexOf(b), 1);
+                    else bots.splice(bots.indexOf(b), 1);
+                }
+            }
+        }
+    }
+}
+
+function explode(cell) {
+    if (cell.mass < 500) return;
+    const pieces = Math.min(MAX_PIECES - 1, 8); 
+    const shareMass = cell.mass / (pieces + 1);
+    cell.mass = shareMass;
+    
+    for(let i=0; i<pieces; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const newPiece = new Cell(cell.x, cell.y, shareMass, cell.color, cell.name, cell.isPlayer);
+        newPiece.boostX = Math.cos(angle) * 600;
+        newPiece.boostY = Math.sin(angle) * 600;
+        newPiece.mergeTimer = 15;
+        if (cell.isPlayer) playerCells.push(newPiece);
+        else bots.push(newPiece);
+    }
+}
+
+// --- RENDERING ---
+function draw() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.translate(canvas.width/2, canvas.height/2);
+    ctx.scale(camera.zoom, camera.zoom);
+    ctx.translate(-camera.x, -camera.y);
+
+    // 1. Grid (Subtil)
+    ctx.strokeStyle = '#e8f0f5';
+    ctx.lineWidth = 1;
+    for(let x=0; x<=WORLD_SIZE; x+=50) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, WORLD_SIZE); ctx.stroke();
+    }
+    for(let y=0; y<=WORLD_SIZE; y+=50) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(WORLD_SIZE, y); ctx.stroke();
+    }
+
+    // 2. Food
+    foods.forEach(f => {
+        ctx.fillStyle = f.c;
+        ctx.beginPath(); ctx.arc(f.x, f.y, 10, 0, Math.PI*2); ctx.fill();
+    });
+
+    // 3. Ejected Mass
+    ejectedMasses.forEach(m => {
+        ctx.fillStyle = m.c;
+        ctx.beginPath(); ctx.arc(m.x, m.y, getRadius(m.mass), 0, Math.PI*2); ctx.fill();
+    });
+
+    // 4. Viruses (Zackig)
+    viruses.forEach(v => {
+        const r = getRadius(v.mass);
+        ctx.fillStyle = '#33ff33';
+        ctx.strokeStyle = '#28d028';
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        for(let i=0; i<24; i++) {
+            let angle = (i / 24) * Math.PI * 2;
+            let dist = i % 2 === 0 ? r : r * 1.15;
+            ctx.lineTo(v.x + Math.cos(angle) * dist, v.y + Math.sin(angle) * dist);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+    });
+
+    // 5. Cells
+    bots.forEach(b => b.draw());
+    playerCells.forEach(c => c.draw());
+
+    // Border (Nur nah am Rand)
+    ctx.strokeStyle = 'rgba(255,0,0,0.5)';
+    ctx.lineWidth = 10;
+    ctx.strokeRect(0, 0, WORLD_SIZE, WORLD_SIZE);
+
+    ctx.restore();
+}
+
+// --- INPUTS ---
+window.onmousemove = (e) => { mouseX = e.clientX; mouseY = e.clientY; };
+
+window.onkeydown = (e) => {
+    // SPACE: Split
+    if (e.code === 'Space') {
+        if (playerCells.length >= MAX_PIECES) return;
+        
+        const worldMouseX = (mouseX - canvas.width/2) / camera.zoom + camera.x;
+        const worldMouseY = (mouseY - canvas.height/2) / camera.zoom + camera.y;
+
+        for (let i = playerCells.length - 1; i >= 0; i--) {
+            let c = playerCells[i];
+            if (c.mass >= MIN_SPLIT_MASS && playerCells.length < MAX_PIECES) {
+                const angle = Math.atan2(worldMouseY - c.y, worldMouseX - c.x);
+                c.mass /= 2;
+                const newPiece = new Cell(c.x, c.y, c.mass, c.color, c.name, true);
+                newPiece.boostX = Math.cos(angle) * 800;
+                newPiece.boostY = Math.sin(angle) * 800;
+                newPiece.mergeTimer = 10 + (c.mass * 0.02); // Merge Zeit abhängig von Masse
+                playerCells.push(newPiece);
+            }
+        }
+    }
+    
+    // W: Eject
+    if (e.code === 'KeyW') {
+        playerCells.forEach(c => {
+            if (c.mass > 100) {
+                const worldMouseX = (mouseX - canvas.width/2) / camera.zoom + camera.x;
+                const worldMouseY = (mouseY - canvas.height/2) / camera.zoom + camera.y;
+                const angle = Math.atan2(worldMouseY - c.y, worldMouseX - c.x);
+                
+                c.mass -= EJECT_LOSS;
+                ejectedMasses.push({
+                    x: c.x + Math.cos(angle) * getRadius(c.mass),
+                    y: c.y + Math.sin(angle) * getRadius(c.mass),
+                    vx: Math.cos(angle) * 500,
+                    vy: Math.sin(angle) * 500,
+                    mass: EJECT_MASS,
+                    c: c.color
+                });
+            }
+        });
+    }
+};
+
+// --- START ---
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+
+init();
+loop();
+
+</script>
+</body>
+</html>
