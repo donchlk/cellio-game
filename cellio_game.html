@@ -104,8 +104,14 @@
         W_FOOD: 1.0,
 
         // Camera
-        CAMERA_Z0: 1.8, // Initial zoom (was too high, adjusted for better starting view)
-        CAMERA_SMOOTH_ZOOM: 0.08,
+                CAMERA_Z0: 1.05,            // Zoom bei Startmasse (lesbar, nicht "top-down")
+        CAMERA_EXPONENT: 0.50,      // ~ 1/sqrt(totalMass)
+        CAMERA_MIN_ZOOM: 0.18,
+        CAMERA_MAX_ZOOM: 1.20,
+        CAMERA_SMOOTH_POS: 0.10,    // Pos smoothing
+        ZOOM_OUT_ALPHA: 0.03,       // Zoom OUT langsam (Mass steigt)
+        ZOOM_IN_ALPHA: 0.10,        // Zoom IN schneller (Mass sinkt)
+        ZOOM_DEADBAND: 0.002,       // gegen Zoom-Jitter
         
         // Debug toggles
         DEBUG_PAUSE: false,
@@ -315,10 +321,27 @@
         if (playerCells.length > 0) {
             let avgX = 0, avgY = 0, totalM = 0;
             playerCells.forEach(c => { avgX += c.x; avgY += c.y; totalM += c.mass; });
-            camera.x += (avgX / playerCells.length - camera.x) * 0.1;
-            camera.y += (avgY / playerCells.length - camera.y) * 0.1;
-            const targetZoom = (CONFIG.CAMERA_Z0 * 1.5) / Math.sqrt(totalM);
-            camera.zoom += (targetZoom - camera.zoom) * CONFIG.CAMERA_SMOOTH_ZOOM;
+                    // Position smoothing (centroid)
+        const targetX = avgX / playerCells.length;
+        const targetY = avgY / playerCells.length;
+        camera.x += (targetX - camera.x) * CONFIG.CAMERA_SMOOTH_POS;
+        camera.y += (targetY - camera.y) * CONFIG.CAMERA_SMOOTH_POS;
+
+        // Zoom target based ONLY on true total mass (no growthBoost multiplier)
+        const massNorm = Math.max(1, totalM / CONFIG.INITIAL_MASS);
+        let targetZoom = CONFIG.CAMERA_Z0 / Math.pow(massNorm, CONFIG.CAMERA_EXPONENT);
+
+        // Clamp zoom
+        targetZoom = Math.max(CONFIG.CAMERA_MIN_ZOOM, Math.min(CONFIG.CAMERA_MAX_ZOOM, targetZoom));
+
+        // Asymmetric smoothing: zoom-out slower, zoom-in faster
+        const diff = targetZoom - camera.zoom;
+        if (Math.abs(diff) < CONFIG.ZOOM_DEADBAND) {
+            camera.zoom = targetZoom;
+        } else {
+            const alpha = (targetZoom < camera.zoom) ? CONFIG.ZOOM_OUT_ALPHA : CONFIG.ZOOM_IN_ALPHA;
+            camera.zoom += diff * alpha;
+        }
         } else {
             gameStarted = false; document.getElementById('start-screen').style.display = 'flex';
         }
@@ -435,12 +458,37 @@
     function updateDevUI() {
         const container = document.getElementById('dev-controls');
         container.innerHTML = '';
-        const groups = {
-            "Physics": ["BASE_SPEED", "ACCELERATION", "DECAY_RATE"],
-            "Split/Merge": ["MIN_SPLIT_MASS", "SPLIT_FORCE", "MERGE_BASE", "MERGE_FACTOR", "MERGE_EXPONENT"],
-            "Virus": ["VIRUS_COUNT", "VIRUS_MASS", "VIRUS_SPLIT_THRESHOLD"],
-            "Bots": ["BOT_COUNT", "BOT_DETECT_RADIUS", "W_THREAT", "W_PREY", "W_FOOD"],
-            "Debug": ["DEBUG_SHOW_VECTORS", "DEBUG_SHOW_TARGETS"]
+                const groups = {
+          "Physics": ["BASE_SPEED", "ACCELERATION", "DECAY_RATE", "INITIAL_MASS"],
+
+          "Split/Merge": [
+            "MIN_SPLIT_MASS", "SPLIT_FORCE",
+            "MERGE_BASE", "MERGE_FACTOR", "MERGE_EXPONENT",
+            "MAX_PIECES"
+          ],
+
+          "Eject": ["EJECT_MASS", "EJECT_LOSS", "EJECT_SPEED"],
+
+          "Virus": [
+            "VIRUS_COUNT", "VIRUS_MASS", "VIRUS_SPLIT_THRESHOLD",
+            "VIRUS_FRAGMENT_DIVISOR", "VIRUS_FRAGMENT_IMPULSE"
+          ],
+
+          "Bots": [
+            "BOT_COUNT", "BOT_DETECT_RADIUS",
+            "BOT_THREAT_RATIO", "BOT_PREY_RATIO",
+            "BOT_SPLIT_KILL_RANGE_FACTOR",
+            "W_THREAT", "W_PREY", "W_FOOD"
+          ],
+
+          "Camera": [
+            "CAMERA_Z0", "CAMERA_EXPONENT",
+            "CAMERA_MIN_ZOOM", "CAMERA_MAX_ZOOM",
+            "CAMERA_SMOOTH_POS",
+            "ZOOM_OUT_ALPHA", "ZOOM_IN_ALPHA", "ZOOM_DEADBAND"
+          ],
+
+          "Debug": ["DEBUG_PAUSE", "DEBUG_SHOW_VECTORS", "DEBUG_SHOW_TARGETS"]
         };
 
         for (let group in groups) {
