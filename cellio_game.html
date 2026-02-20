@@ -1,355 +1,191 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Cell.io – Mini Agar Clone</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #1a1a2e; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
-  canvas { display: block; cursor: none; }
-  #ui {
-    position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
-    color: white; text-align: center; pointer-events: none;
-  }
-  #score { font-size: 22px; font-weight: 700; text-shadow: 0 2px 8px rgba(0,0,0,0.8); }
-  #leaderboard {
-    position: fixed; top: 16px; right: 16px;
-    background: rgba(0,0,0,0.55); backdrop-filter: blur(6px);
-    border-radius: 10px; padding: 12px 18px; color: white; min-width: 160px;
-    border: 1px solid rgba(255,255,255,0.1);
-  }
-  #leaderboard h3 { font-size: 13px; letter-spacing: 1px; text-transform: uppercase; opacity: 0.7; margin-bottom: 8px; }
-  #leaderboard ol { padding-left: 18px; font-size: 13px; line-height: 1.8; }
-  #leaderboard li.me { color: #7DF9AA; font-weight: 700; }
-  #info {
-    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
-    color: rgba(255,255,255,0.45); font-size: 12px; pointer-events: none;
-  }
-  #respawn {
-    display: none; position: fixed; inset: 0;
-    background: rgba(0,0,0,0.75); color: white;
-    flex-direction: column; align-items: center; justify-content: center;
-    gap: 16px;
-  }
-  #respawn h2 { font-size: 36px; }
-  #respawn p { opacity: 0.7; }
-  #respawn button {
-    background: #7DF9AA; color: #111; border: none; padding: 12px 36px;
-    border-radius: 8px; font-size: 16px; font-weight: 700; cursor: pointer;
-  }
-</style>
+    <meta charset="UTF-8">
+    <title>Cell.io - Enhanced Edition</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #0b0b0b; font-family: 'Segoe UI', sans-serif; }
+        canvas { display: block; }
+        #ui { position: absolute; top: 20px; left: 20px; color: #fff; pointer-events: none; }
+        #leaderboard { position: absolute; top: 20px; right: 20px; background: rgba(0,0,0,0.6); color: #fff; padding: 15px; border-radius: 8px; min-width: 180px; backdrop-filter: blur(5px); border: 1px solid rgba(255,255,255,0.1); }
+        #minimap { position: absolute; bottom: 20px; right: 20px; width: 150px; height: 150px; background: rgba(0,0,0,0.5); border: 1px solid #444; border-radius: 4px; }
+        #start-screen, #death-screen { position: absolute; inset: 0; background: rgba(0,0,0,0.85); display: flex; flex-direction: column; align-items: center; justify-content: center; color: #fff; z-index: 100; backdrop-filter: blur(10px); }
+        input { padding: 12px; font-size: 18px; border-radius: 5px; border: none; margin-bottom: 20px; text-align: center; }
+        button { padding: 12px 30px; font-size: 20px; cursor: pointer; background: #007bff; color: #fff; border: none; border-radius: 5px; transition: 0.2s; }
+        button:hover { background: #0056b3; transform: scale(1.05); }
+        .stat { font-size: 18px; margin-bottom: 5px; }
+    </style>
 </head>
 <body>
-<canvas id="c"></canvas>
-<div id="ui"><div id="score">Masse: 10</div></div>
-<div id="leaderboard"><h3>🏆 Top 5</h3><ol id="lbList"></ol></div>
-<div id="info">Maus bewegen zum Steuern – Zelle frisst kleinere Gegner</div>
-<div id="respawn">
-  <h2>💀 Du wurdest gefressen!</h2>
-  <p id="finalScore"></p>
-  <button onclick="respawn()">Nochmal spielen</button>
+<div id="ui">
+    <div class="stat">Mass: <span id="mass">0</span></div>
+    <div class="stat">Score: <span id="score">0</span></div>
 </div>
-
+<div id="leaderboard">
+    <div style="text-align:center; font-weight:bold; margin-bottom:10px;">Leaderboard</div>
+    <div id="lb-list"></div>
+</div>
+<canvas id="minimap"></canvas>
+<div id="start-screen">
+    <h1>Cell.io</h1>
+    <input type="text" id="name-input" placeholder="Your Nickname" maxlength="12">
+    <button onclick="startGame()">Play</button>
+    <p style="margin-top: 20px; color: #888;">[Space] Split | [W] Eject Mass</p>
+</div>
+<div id="death-screen" style="display:none;">
+    <h1 style="color: #ff4444;">Game Over</h1>
+    <p id="final-stats"></p>
+    <button onclick="location.reload()">Try Again</button>
+</div>
+<canvas id="game"></canvas>
 <script>
-const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
-const W = 3000, H = 3000;
-let mouse = { x: 0, y: 0 };
-let cam = { x: 0, y: 0, zoom: 1 };
+const canvas = document.getElementById("game"), ctx = canvas.getContext("2d");
+const mCanvas = document.getElementById("minimap"), mCtx = mCanvas.getContext("2d");
+const WORLD_SIZE = 4000, FOOD_COUNT = 800, BOT_COUNT = 15;
+const COLORS = ["#ff5e5e", "#5eff5e", "#5e5eff", "#ffff5e", "#ff5eff", "#5effff", "#ffae5e"];
+let player = null, cells = [], food = [], particles = [], camera = { x: 2000, y: 2000, z: 1 }, mouse = { x: 0, y: 0 }, lastUpdate = Date.now();
 
-function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-resize();
-window.addEventListener('resize', resize);
-window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
-
-// ── Color palette ──
-const COLORS = ['#FF6B6B','#FFD93D','#6BCB77','#4D96FF','#FF922B','#CC5DE8','#20C997','#F06595','#74C0FC','#A9E34B'];
-
-// ── Food pellets ──
-const FOOD_COUNT = 600;
-let foods = [];
-function spawnFood(n = 1) {
-  for (let i = 0; i < n; i++) {
-    foods.push({
-      x: Math.random() * W,
-      y: Math.random() * H,
-      r: 5 + Math.random() * 4,
-      color: COLORS[Math.floor(Math.random() * COLORS.length)]
-    });
-  }
-}
-spawnFood(FOOD_COUNT);
-
-// ── Bot names ──
-const BOT_NAMES = ['Zellchen','BlobX','MaxMass','CellBot','GrowFast','NomNom','BigBoss','Splitter','Absorber','LilBlob'];
-
-// ── Player ──
-let player;
-function makePlayer() {
-  return {
-    x: W / 2, y: H / 2,
-    r: 18, mass: 10,
-    color: '#7DF9AA', name: 'Du',
-    isPlayer: true, alive: true
-  };
+class Cell {
+    constructor(x, y, r, c, n, owner = null) {
+        this.x = x; this.y = y; this.r = r; this.c = c; this.n = n; this.owner = owner;
+        this.pulse = Math.random() * Math.PI * 2;
+    }
+    draw() {
+        this.pulse += 0.05;
+        const wobble = Math.sin(this.pulse) * (this.r * 0.02);
+        ctx.save();
+        ctx.fillStyle = this.c;
+        ctx.beginPath();
+        for(let i=0; i<8; i++) {
+            let a = (i/8)*Math.PI*2; let pr = this.r + (i%2?wobble:-wobble);
+            ctx.lineTo(this.x + Math.cos(a)*pr, this.y + Math.sin(a)*pr);
+        }
+        ctx.closePath(); ctx.fill();
+        const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.r);
+        grad.addColorStop(0.8, "transparent"); grad.addColorStop(1, "rgba(255,255,255,0.2)");
+        ctx.fillStyle = grad; ctx.fill();
+        ctx.restore();
+        if (this.n && this.r > 15) {
+            ctx.fillStyle = "#fff"; ctx.textAlign = "center";
+            ctx.font = `bold ${Math.max(12, this.r/2.5)}px sans-serif`;
+            ctx.fillText(this.n, this.x, this.y + this.r/6);
+        }
+    }
 }
 
-// ── Bots ──
-let bots = [];
-function makeBots() {
-  bots = [];
-  for (let i = 0; i < 12; i++) {
-    bots.push({
-      x: Math.random() * W, y: Math.random() * H,
-      r: 12 + Math.random() * 20,
-      mass: massFromR(12 + Math.random() * 20),
-      color: COLORS[i % COLORS.length],
-      name: BOT_NAMES[i % BOT_NAMES.length],
-      vx: 0, vy: 0,
-      targetTimer: 0,
-      tx: Math.random() * W, ty: Math.random() * H,
-      isPlayer: false, alive: true
-    });
-  }
+function spawnFood() { food.push({ x: Math.random()*WORLD_SIZE, y: Math.random()*WORLD_SIZE, r: 5, c: COLORS[Math.floor(Math.random()*COLORS.length)] }); }
+function spawnBot() {
+    const names = ["Botzilla", "Rex", "Blobby", "Hunter", "Tiny", "Swift"];
+    cells.push(new Cell(Math.random()*WORLD_SIZE, Math.random()*WORLD_SIZE, 30, COLORS[Math.floor(Math.random()*COLORS.length)], names[Math.floor(Math.random()*names.length)]));
 }
 
-function rFromMass(m) { return Math.sqrt(m) * 5; }
-function massFromR(r) { return (r / 5) ** 2; }
+function startGame() {
+    const name = document.getElementById("name-input").value || "Player";
+    document.getElementById("start-screen").style.display = "none";
+    player = new Cell(WORLD_SIZE/2, WORLD_SIZE/2, 30, "#fff", name, "player");
+    cells.push(player);
+    for(let i=0; i<FOOD_COUNT; i++) spawnFood();
+    for(let i=0; i<BOT_COUNT; i++) spawnBot();
+    requestAnimationFrame(gameLoop);
+}
 
-// ── Movement speed (larger = slower) ──
-function speed(r) { return Math.max(1.2, 7 - r * 0.04); }
-
-// ── Init ──
-player = makePlayer();
-makeBots();
-
-// ── Game loop ──
-let last = performance.now();
-let dead = false;
+function gameLoop() {
+    const now = Date.now(); const dt = (now - lastUpdate) / 1000; lastUpdate = now;
+    update(dt); draw(); requestAnimationFrame(gameLoop);
+}
 
 function update(dt) {
-  if (dead) return;
-
-  // Player movement
-  const cx = canvas.width / 2, cy = canvas.height / 2;
-  const dx = mouse.x - cx, dy = mouse.y - cy;
-  const dist = Math.hypot(dx, dy) || 1;
-  const sp = speed(player.r);
-  const nx = dx / dist, ny = dy / dist;
-  player.x = Math.max(player.r, Math.min(W - player.r, player.x + nx * sp * dt * 60));
-  player.y = Math.max(player.r, Math.min(H - player.r, player.y + ny * sp * dt * 60));
-
-  // Camera
-  const targetZoom = Math.max(0.35, Math.min(1, 50 / player.r));
-  cam.zoom += (targetZoom - cam.zoom) * 0.05;
-  cam.x += (player.x - cam.x) * 0.08;
-  cam.y += (player.y - cam.y) * 0.08;
-
-  // Player eats food
-  for (let i = foods.length - 1; i >= 0; i--) {
-    const f = foods[i];
-    if (Math.hypot(player.x - f.x, player.y - f.y) < player.r) {
-      player.mass += 0.5;
-      player.r = rFromMass(player.mass);
-      foods.splice(i, 1);
-    }
-  }
-
-  // Bots AI + movement
-  for (const bot of bots) {
-    if (!bot.alive) continue;
-    bot.targetTimer -= dt;
-    if (bot.targetTimer <= 0) {
-      bot.targetTimer = 0.5 + Math.random() * 1.5;
-      // flee from bigger, chase smaller
-      let bestScore = -Infinity, bx = -1, by = -1;
-      const allCells = [player, ...bots.filter(b => b !== bot && b.alive)];
-      for (const c of allCells) {
-        const d = Math.hypot(bot.x - c.x, bot.y - c.y);
-        const score = (bot.r > c.r * 1.1) ? 1000 / (d + 1) : -500 / (d + 1);
-        if (score > bestScore) { bestScore = score; bx = c.x; by = c.y; }
-      }
-      // also wander toward food
-      let nearFood = null, nfd = Infinity;
-      for (const f of foods) {
-        const d = Math.hypot(bot.x - f.x, bot.y - f.y);
-        if (d < nfd) { nfd = d; nearFood = f; }
-      }
-      if (nearFood && nfd < 200) { bot.tx = nearFood.x; bot.ty = nearFood.y; }
-      else if (bx >= 0) { bot.tx = bx; bot.ty = by; }
-      else { bot.tx = Math.random() * W; bot.ty = Math.random() * H; }
-    }
-    const bdx = bot.tx - bot.x, bdy = bot.ty - bot.y;
-    const bd = Math.hypot(bdx, bdy) || 1;
-    const bsp = speed(bot.r);
-    bot.x = Math.max(bot.r, Math.min(W - bot.r, bot.x + bdx / bd * bsp * dt * 60));
-    bot.y = Math.max(bot.r, Math.min(H - bot.r, bot.y + bdy / bd * bsp * dt * 60));
-
-    // Bot eats food
-    for (let i = foods.length - 1; i >= 0; i--) {
-      const f = foods[i];
-      if (Math.hypot(bot.x - f.x, bot.y - f.y) < bot.r) {
-        bot.mass += 0.5; bot.r = rFromMass(bot.mass); foods.splice(i, 1);
-      }
-    }
-  }
-
-  // Eat collisions between all cells
-  const allCells = [player, ...bots];
-  for (let i = 0; i < allCells.length; i++) {
-    const a = allCells[i];
-    if (!a.alive) continue;
-    for (let j = 0; j < allCells.length; j++) {
-      if (i === j) continue;
-      const b = allCells[j];
-      if (!b.alive) continue;
-      if (a.r > b.r * 1.1) {
-        const d = Math.hypot(a.x - b.x, a.y - b.y);
-        if (d < a.r * 0.85) {
-          a.mass += b.mass;
-          a.r = rFromMass(a.mass);
-          b.alive = false;
-          if (b.isPlayer) { dead = true; showDead(); return; }
-          // Respawn bot later
-          setTimeout(() => respawnBot(b), 3000);
+    const playerPieces = cells.filter(c => c.owner === "player");
+    cells.forEach(c => {
+        const speed = 150 / Math.sqrt(c.r);
+        let tx, ty;
+        if (c.owner === "player") {
+            tx = mouse.x - canvas.width/2; ty = mouse.y - canvas.height/2;
+            const dist = Math.hypot(tx, ty);
+            if (dist > 10) { c.x += (tx / dist) * speed; c.y += (ty / dist) * speed; }
+        } else {
+            if (!c.target || Math.hypot(c.x - c.target.x, c.y - c.target.y) < 50) c.target = food[Math.floor(Math.random()*food.length)];
+            const d = Math.hypot(c.target.x - c.x, c.target.y - c.y);
+            c.x += ((c.target.x - c.x) / d) * speed; c.y += ((c.target.y - c.y) / d) * speed;
         }
-      }
+        c.x = Math.max(c.r, Math.min(WORLD_SIZE - c.r, c.x));
+        c.y = Math.max(c.r, Math.min(WORLD_SIZE - c.r, c.y));
+        if (c.r > 20) c.r -= c.r * 0.0005 * dt;
+    });
+
+    food.forEach((f, i) => {
+        cells.forEach(c => {
+            if (Math.hypot(c.x - f.x, c.y - f.y) < c.r) {
+                c.r = Math.sqrt(c.r*c.r + f.r*f.r);
+                food[i] = { x: Math.random()*WORLD_SIZE, y: Math.random()*WORLD_SIZE, r: 5, c: COLORS[Math.floor(Math.random()*COLORS.length)] };
+                if (c.owner === "player") { for(let j=0; j<3; j++) particles.push({ x: f.x, y: f.y, vx: (Math.random()-0.5)*5, vy: (Math.random()-0.5)*5, c: f.c, life: 1 }); }
+            }
+        });
+    });
+
+    for (let i = cells.length - 1; i >= 0; i--) {
+        for (let j = cells.length - 1; j >= 0; j--) {
+            if (i === j) continue;
+            let a = cells[i], b = cells[j]; if (!a || !b) continue;
+            const d = Math.hypot(a.x - b.x, a.y - b.y);
+            if (a.r > b.r * 1.15 && d < a.r - b.r * 0.3) {
+                a.r = Math.sqrt(a.r*a.r + b.r*b.r);
+                if (b.owner === "player" && cells.filter(c => c.owner === "player").length === 1) gameOver();
+                cells.splice(j, 1); if (!b.owner) setTimeout(spawnBot, 5000);
+            }
+        }
     }
-  }
 
-  // Refill food
-  if (foods.length < FOOD_COUNT - 10) spawnFood(5);
-
-  // Mass decay (slow shrink)
-  if (player.mass > 10) { player.mass = Math.max(10, player.mass * 0.9998); player.r = rFromMass(player.mass); }
-  for (const bot of bots) {
-    if (!bot.alive || bot.mass <= 10) continue;
-    bot.mass = Math.max(10, bot.mass * 0.9998); bot.r = rFromMass(bot.mass);
-  }
-
-  // HUD
-  document.getElementById('score').textContent = 'Masse: ' + Math.floor(player.mass);
-  updateLeaderboard();
-}
-
-function respawnBot(bot) {
-  bot.x = Math.random() * W; bot.y = Math.random() * H;
-  bot.mass = 10 + Math.random() * 20;
-  bot.r = rFromMass(bot.mass);
-  bot.alive = true;
-}
-
-function showDead() {
-  const el = document.getElementById('respawn');
-  el.style.display = 'flex';
-  document.getElementById('finalScore').textContent = 'Erreichte Masse: ' + Math.floor(player.mass);
-}
-
-function respawn() {
-  dead = false;
-  player = makePlayer();
-  makeBots();
-  foods = [];
-  spawnFood(FOOD_COUNT);
-  document.getElementById('respawn').style.display = 'none';
-}
-
-function updateLeaderboard() {
-  const entries = [player, ...bots.filter(b => b.alive)]
-    .sort((a, b) => b.mass - a.mass).slice(0, 5);
-  const ol = document.getElementById('lbList');
-  ol.innerHTML = entries.map(e =>
-    `<li class="${e.isPlayer ? 'me' : ''}">${e.name} – ${Math.floor(e.mass)}</li>`
-  ).join('');
+    if (playerPieces.length > 0) {
+        let avgX = 0, avgY = 0, totalR = 0;
+        playerPieces.forEach(p => { avgX += p.x; avgY += p.y; totalR += p.r; });
+        camera.x = avgX / playerPieces.length; camera.y = avgY / playerPieces.length;
+        camera.z = Math.pow(40 / (totalR / playerPieces.length), 0.4);
+        const mass = Math.floor(playerPieces.reduce((sum, p) => sum + p.r*p.r/10, 0));
+        document.getElementById("mass").innerText = mass;
+        document.getElementById("score").innerText = Math.max(parseInt(document.getElementById("score").innerText), mass);
+    }
+    particles = particles.filter(p => { p.x += p.vx; p.y += p.vy; p.life -= 0.05; return p.life > 0; });
 }
 
 function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.save();
-  const ox = canvas.width / 2 - cam.x * cam.zoom;
-  const oy = canvas.height / 2 - cam.y * cam.zoom;
-  ctx.translate(ox, oy);
-  ctx.scale(cam.zoom, cam.zoom);
+    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.translate(canvas.width/2, canvas.height/2); ctx.scale(camera.z, camera.z); ctx.translate(-camera.x, -camera.y);
+    ctx.strokeStyle = "#1a1a1a"; ctx.lineWidth = 2;
+    for(let x=0; x<=WORLD_SIZE; x+=100) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,WORLD_SIZE); ctx.stroke(); }
+    for(let y=0; y<=WORLD_SIZE; y+=100) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(WORLD_SIZE,y); ctx.stroke(); }
+    ctx.strokeStyle = "#ff4444"; ctx.lineWidth = 5; ctx.strokeRect(0, 0, WORLD_SIZE, WORLD_SIZE);
+    food.forEach(f => { ctx.fillStyle = f.c; ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI*2); ctx.fill(); });
+    particles.forEach(p => { ctx.globalAlpha = p.life; ctx.fillStyle = p.c; ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, Math.PI*2); ctx.fill(); });
+    cells.sort((a,b) => a.r - b.r).forEach(c => c.draw());
+    ctx.restore();
+    
+    mCanvas.width = 150; mCanvas.height = 150; const s = 150 / WORLD_SIZE;
+    mCtx.fillStyle = "rgba(255,255,255,0.1)"; mCtx.fillRect(0,0,150,150);
+    cells.forEach(c => { mCtx.fillStyle = c.owner === "player" ? "#fff" : c.c; mCtx.beginPath(); mCtx.arc(c.x*s, c.y*s, Math.max(1, c.r*s), 0, Math.PI*2); mCtx.fill(); });
+    
+    const sorted = cells.filter(c => c.n).sort((a,b) => b.r - a.r).slice(0, 5);
+    document.getElementById("lb-list").innerHTML = sorted.map((c, i) => `<div style="color:${c.owner==='player'?'#fff':'#aaa'}">${i+1}. ${c.n}</div>`).join("");
+}
 
-  // Grid background
-  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
-  ctx.lineWidth = 1 / cam.zoom;
-  const gs = 60;
-  const sx = Math.floor((cam.x - canvas.width / 2 / cam.zoom) / gs) * gs;
-  const sy = Math.floor((cam.y - canvas.height / 2 / cam.zoom) / gs) * gs;
-  for (let gx = sx; gx < sx + canvas.width / cam.zoom + gs; gx += gs) {
-    ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke();
-  }
-  for (let gy = sy; gy < sy + canvas.height / cam.zoom + gs; gy += gs) {
-    ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke();
-  }
+function gameOver() {
+    document.getElementById("death-screen").style.display = "flex";
+    document.getElementById("final-stats").innerText = `Final Score: ${document.getElementById("score").innerText}`;
+}
 
-  // Border
-  ctx.strokeStyle = 'rgba(255,100,100,0.4)';
-  ctx.lineWidth = 6 / cam.zoom;
-  ctx.strokeRect(0, 0, W, H);
-
-  // Food
-  for (const f of foods) {
-    ctx.beginPath();
-    ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
-    ctx.fillStyle = f.color;
-    ctx.fill();
-    ctx.shadowColor = f.color;
-    ctx.shadowBlur = 6;
-    ctx.fill();
-    ctx.shadowBlur = 0;
-  }
-
-  // Cells
-  const drawCell = (c) => {
-    if (!c.alive) return;
-    ctx.beginPath();
-    ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
-    ctx.fillStyle = c.color;
-    ctx.shadowColor = c.color;
-    ctx.shadowBlur = c.isPlayer ? 18 : 8;
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    // Border
-    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-    ctx.lineWidth = 2 / cam.zoom;
-    ctx.stroke();
-    // Name
-    if (c.r > 12) {
-      ctx.fillStyle = 'rgba(255,255,255,0.9)';
-      const fs = Math.max(10, Math.min(c.r * 0.45, 22));
-      ctx.font = `bold ${fs}px Segoe UI`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(c.name, c.x, c.y);
+window.onmousemove = e => { mouse.x = e.clientX; mouse.y = e.clientY; };
+window.onkeydown = e => {
+    if (e.code === "Space" && player) {
+        cells.filter(c => c.owner === "player").forEach(p => {
+            if (p.r > 35) {
+                p.r /= 1.414; const a = Math.atan2(mouse.y - canvas.height/2, mouse.x - canvas.width/2);
+                cells.push(new Cell(p.x + Math.cos(a)*p.r*2, p.y + Math.sin(a)*p.r*2, p.r, p.c, p.n, "player"));
+            }
+        });
     }
-  };
-
-  for (const bot of bots) drawCell(bot);
-  drawCell(player);
-
-  // Custom cursor cross
-  const mx = (mouse.x - ox) / cam.zoom, my = (mouse.y - oy) / cam.zoom;
-  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-  ctx.lineWidth = 1 / cam.zoom;
-  ctx.beginPath(); ctx.moveTo(mx - 10 / cam.zoom, my); ctx.lineTo(mx + 10 / cam.zoom, my); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(mx, my - 10 / cam.zoom); ctx.lineTo(mx, my + 10 / cam.zoom); ctx.stroke();
-
-  ctx.restore();
-}
-
-function loop(now) {
-  const dt = Math.min((now - last) / 1000, 0.05);
-  last = now;
-  update(dt);
-  draw();
-  requestAnimationFrame(loop);
-}
-requestAnimationFrame(t => { last = t; loop(t); });
+};
 </script>
 </body>
 </html>
