@@ -4,22 +4,13 @@
     <meta charset="UTF-8">
     <title>Cell.io - Enhanced Professional Edition</title>
     <style>
-        /* Base styles for the game environment */
         body { margin: 0; overflow: hidden; background: #f2fbff; font-family: 'Ubuntu', sans-serif; cursor: default; }
         canvas { display: block; }
-
-        /* HUD: Heads-up display for real-time score tracking */
         #hud { position: absolute; top: 20px; left: 20px; color: #555; pointer-events: none; z-index: 10; font-size: 18px; font-weight: bold; }
-        
-        /* Leaderboard: Displays top players ranked by total mass */
         #leaderboard { position: absolute; top: 20px; right: 20px; background: rgba(255,255,255,0.8); padding: 15px; border-radius: 8px; min-width: 180px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); z-index: 10; }
         .lb-title { font-weight: bold; border-bottom: 2px solid #eee; margin-bottom: 8px; padding-bottom: 5px; text-align: center; color: #333; }
         #lb-content { font-size: 14px; line-height: 1.6; }
-
-        /* Instructions: Brief overlay to help new players */
         #instructions { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); color: #999; font-size: 13px; z-index: 10; background: rgba(255,255,255,0.5); padding: 5px 15px; border-radius: 20px; }
-
-        /* Start Screen: Menu for nickname entry and game initiation */
         #start-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; backdrop-filter: blur(5px); }
         .login-box { background: white; padding: 40px; border-radius: 15px; text-align: center; box-shadow: 0 15px 35px rgba(0,0,0,0.3); width: 320px; }
         .login-box h1 { margin-top: 0; color: #333; font-size: 32px; }
@@ -27,6 +18,19 @@
         .login-box input:focus { border-color: #ff3f3f; }
         .login-box button { background: #ff3f3f; color: white; border: none; padding: 12px 0; width: 100%; border-radius: 6px; font-size: 18px; font-weight: bold; cursor: pointer; transition: background 0.2s; }
         .login-box button:hover { background: #e63535; }
+
+        /* DEV PANEL STYLES */
+        #dev-btn { position: fixed; top: 10px; right: 10px; z-index: 1000; background: #333; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; opacity: 0.7; font-size: 12px; }
+        #dev-panel { position: fixed; top: 40px; right: 10px; width: 300px; max-height: 80vh; background: rgba(0,0,0,0.85); color: #0f0; font-family: monospace; padding: 15px; border-radius: 8px; z-index: 1000; overflow-y: auto; display: none; font-size: 12px; box-shadow: 0 0 20px rgba(0,0,0,0.5); border: 1px solid #444; }
+        #dev-panel h3 { margin: 0 0 10px 0; color: #fff; border-bottom: 1px solid #444; padding-bottom: 5px; }
+        .dev-group { margin-bottom: 15px; }
+        .dev-row { display: flex; align-items: center; margin-bottom: 5px; }
+        .dev-row label { flex: 1; margin-right: 10px; }
+        .dev-row input[type="number"] { width: 60px; background: #222; color: #0f0; border: 1px solid #444; padding: 2px; }
+        .dev-row input[type="checkbox"] { cursor: pointer; }
+        .dev-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 10px; }
+        .dev-actions button { background: #444; color: white; border: none; padding: 5px; cursor: pointer; border-radius: 3px; font-size: 11px; }
+        .dev-actions button:hover { background: #555; }
     </style>
 </head>
 <body>
@@ -43,109 +47,132 @@
             <button onclick="startGame()">Play</button>
         </div>
     </div>
+
+    <button id="dev-btn" onclick="toggleDevPanel()">DEV</button>
+    <div id="dev-panel">
+        <h3>Developer Panel</h3>
+        <div id="dev-controls"></div>
+        <div class="dev-actions">
+            <button onclick="togglePause()" id="pause-btn">Pause</button>
+            <button onclick="stepFrames(1)">Step 1F</button>
+            <button onclick="stepFrames(10)">Step 10F</button>
+            <button onclick="resetDefaults()">Reset Defaults</button>
+        </div>
+    </div>
+
     <canvas id="game"></canvas>
 
     <script>
     /**
-     * GLOBAL CONFIGURATION & CONSTANTS
-     * These parameters define the core gameplay feel and balance.
+     * CONFIGURATION SYSTEM
      */
+    const DEFAULT_CONFIG = {
+        // Physics / Mass / Movement
+        BASE_SPEED: 2300,
+        ACCELERATION: 16,
+        DECAY_RATE: 0.0022,
+        INITIAL_MASS: 250,
+        
+        // Split / Merge
+        MIN_SPLIT_MASS: 420,
+        SPLIT_FORCE: 850,
+        MERGE_BASE: 8,
+        MERGE_FACTOR: 1.3,
+        MERGE_EXPONENT: 0.35,
+        MAX_PIECES: 16,
+
+        // Eject mass
+        EJECT_MASS: 35,
+        EJECT_LOSS: 38,
+        EJECT_SPEED: 600,
+
+        // Virus
+        VIRUS_COUNT: 35,
+        VIRUS_MASS: 1200,
+        VIRUS_SPLIT_THRESHOLD: 1800,
+        VIRUS_FRAGMENT_DIVISOR: 450,
+        VIRUS_FRAGMENT_IMPULSE: 850,
+
+        // Bots (AI tuning)
+        BOT_COUNT: 12,
+        BOT_DETECT_RADIUS: 1200,
+        BOT_THREAT_RATIO: 1.15,
+        BOT_PREY_RATIO: 0.85,
+        BOT_SPLIT_KILL_RANGE_FACTOR: 2.6,
+        W_THREAT: 1.0,
+        W_PREY: 1.0,
+        W_FOOD: 1.0,
+
+        // Camera
+        CAMERA_Z0: 1.8, // Initial zoom (was too high, adjusted for better starting view)
+        CAMERA_SMOOTH_ZOOM: 0.08,
+        
+        // Debug toggles
+        DEBUG_PAUSE: false,
+        DEBUG_SHOW_VECTORS: false,
+        DEBUG_SHOW_TARGETS: false,
+        FIXED_STEP: 1/60
+    };
+
+    let CONFIG = JSON.parse(localStorage.getItem('cellio_config')) || { ...DEFAULT_CONFIG };
+    // Ensure new keys from defaults are present
+    for (let k in DEFAULT_CONFIG) if (CONFIG[k] === undefined) CONFIG[k] = DEFAULT_CONFIG[k];
+
     const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
-    const WORLD_SIZE = 5000, INITIAL_MASS = 250, MIN_SPLIT_MASS = 450, MAX_PIECES = 16;
-    const FOOD_COUNT = 1000, VIRUS_COUNT = 35, VIRUS_MASS = 1200, VIRUS_SPLIT_THRESHOLD = VIRUS_MASS * 1.5;
-    const BASE_SPEED = 2300, DECAY_RATE = 0.0022, MERGE_BASE = 8, MERGE_FACTOR = 1.3;
-    const SPLIT_FORCE = 850, ACCELERATION = 16, EJECT_MASS = 35, EJECT_LOSS = 38;
+    const WORLD_SIZE = 5000;
     const COLORS = ['#33ff33', '#3333ff', '#ff3333', '#ffff33', '#ff33ff', '#33ffff', '#ff9900', '#7d5fff'];
     const BOT_NAMES = ["Sir Eats-a-lot", "Cell-fie", "Wojak", "Dogecoin", "Sanic", "MemeLord", "Doge", "Spooderman", "Blobby", "AgarioMaster", "ProPlayer", "Massive"];
 
-    // Game state variables
     let lastTime = Date.now(), mouseX = 0, mouseY = 0, playerCells = [], bots = [], foods = [], viruses = [], ejectedMasses = [];
-    let gameStarted = false, localPlayerId = null, camera = { x: WORLD_SIZE/2, y: WORLD_SIZE/2, zoom: 1 };
+    let gameStarted = false, localPlayerId = null, camera = { x: WORLD_SIZE/2, y: WORLD_SIZE/2, zoom: CONFIG.CAMERA_Z0 };
+    let stepRemaining = 0;
 
     /**
      * UTILITY FUNCTIONS
      */
     const getRadius = (mass) => Math.sqrt(mass);
-    
-    /**
-     * Calculates current speed based on mass and active speed boost.
-     * Speed decreases as mass increases to balance the game.
-     */
-    function getBaseSpeed(m, speedBoost = 0) {
-        const base = BASE_SPEED / (Math.pow(m, 0.5) + 0.002 * m);
-        return base * (1 + 0.05 * speedBoost); // speedBoost adds up to 5% extra speed
-    }
+    const getBaseSpeed = (m, speedBoost = 0) => (CONFIG.BASE_SPEED / (Math.pow(m, 0.5) + 0.002 * m)) * (1 + 0.05 * speedBoost);
 
-    /**
-     * CORE CELL CLASS
-     * Represents any living entity in the game (Player or Bot pieces).
-     */
     class Cell {
         constructor(id, x, y, mass, color, name, isPlayer = false) {
             this.playerId = id; this.x = x; this.y = y; this.mass = mass; this.color = color; this.name = name; this.isPlayer = isPlayer;
             this.vx = 0; this.vy = 0; this.boostX = 0; this.boostY = 0; this.mergeTimer = 0;
-            this.growthBoost = 0; // Float 0..1 for visual feedback when eating
-            this.speedBoost = 0;  // Float 0..1 for temporary speed increases
-            this.wanderTimer = 0; this.wanderAngle = 0; // Bot-specific wandering state
+            this.growthBoost = 0; this.speedBoost = 0;
+            this.wanderTimer = 0; this.wanderAngle = 0;
+            this.targetX = x; this.targetY = y;
         }
 
-        /**
-         * Logic update for a single cell piece.
-         */
         update(dt, targetX, targetY) {
             const s = getBaseSpeed(this.mass, this.speedBoost);
-            
-            // Movement towards target (Mouse or Bot AI target)
             if (targetX !== undefined) {
                 const dx = targetX - this.x, dy = targetY - this.y, dist = Math.hypot(dx, dy);
                 const targetVx = dist > 1 ? (dx / dist) * s : 0;
                 const targetVy = dist > 1 ? (dy / dist) * s : 0;
-                const acc = (ACCELERATION / Math.sqrt(this.mass));
+                const acc = (CONFIG.ACCELERATION / Math.sqrt(this.mass));
                 this.vx += (targetVx - this.vx) * acc * dt;
                 this.vy += (targetVy - this.vy) * acc * dt;
             }
-
-            // Apply calculated velocity and impulsive boosts (from splitting/ejecting)
             this.x += (this.vx + this.boostX) * dt;
             this.y += (this.vy + this.boostY) * dt;
-
-            // Decay boosts over time
             const boostDecay = Math.pow(0.05, dt);
             this.boostX *= boostDecay; this.boostY *= boostDecay;
-
-            // Keep cell within world boundaries
             const r = getRadius(this.mass);
             this.x = Math.max(r, Math.min(WORLD_SIZE - r, this.x));
             this.y = Math.max(r, Math.min(WORLD_SIZE - r, this.y));
-
-            // Mass decay to prevent infinite growth
-            let k = DECAY_RATE;
+            let k = CONFIG.DECAY_RATE;
             if (this.mass > 8000) k *= (1 + (this.mass / 8000));
-            if (this.mass > INITIAL_MASS) this.mass -= this.mass * k * dt;
-
-            // Timer management
+            if (this.mass > CONFIG.INITIAL_MASS) this.mass -= this.mass * k * dt;
             if (this.mergeTimer > 0) this.mergeTimer -= dt;
-            
-            // Linear decay for gameplay boosts
             if (this.growthBoost > 0) this.growthBoost = Math.max(0, this.growthBoost - 4 * dt);
             if (this.speedBoost > 0) this.speedBoost = Math.max(0, this.speedBoost - 5 * dt);
         }
 
-        /**
-         * Rendering logic for a cell.
-         */
         draw() {
-            // Apply visual pulse based on growthBoost
             const displayMultiplier = 1 + 0.08 * this.growthBoost;
             const r = getRadius(this.mass) * displayMultiplier;
-
             ctx.save(); ctx.translate(this.x, this.y);
-            
-            // Draw main circle
             ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fillStyle = this.color; ctx.fill();
             ctx.lineWidth = Math.max(2, r * 0.04); ctx.strokeStyle = 'rgba(0,0,0,0.1)'; ctx.stroke();
-            
-            // Draw Name and Mass label
             ctx.fillStyle = 'white'; ctx.textAlign = 'center'; ctx.font = `bold ${r * 0.38}px Ubuntu, sans-serif`;
             ctx.fillText(this.name, 0, r * 0.1);
             if (r > 25) {
@@ -153,19 +180,28 @@
                 ctx.fillText(Math.floor(this.mass), 0, r * 0.45);
             }
             ctx.restore();
+
+            // DEBUG RENDERING
+            if (CONFIG.DEBUG_SHOW_VECTORS) {
+                ctx.strokeStyle = '#f0f'; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(this.x + this.vx, this.y + this.vy); ctx.stroke();
+                ctx.strokeStyle = '#0ff'; ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(this.x + this.boostX, this.y + this.boostY); ctx.stroke();
+            }
+            if (!this.isPlayer && CONFIG.DEBUG_SHOW_TARGETS) {
+                ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.setLineDash([5, 5]);
+                ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(this.targetX, this.targetY); ctx.stroke();
+                ctx.setLineDash([]); ctx.fillStyle = '#fff'; ctx.fillRect(this.targetX - 2, this.targetY - 2, 4, 4);
+            }
         }
     }
 
     function generateId() { return Math.random().toString(36).substr(2, 9); }
 
-    /**
-     * Initializes player state and hides menu.
-     */
     function startGame() {
         const nickInput = document.getElementById('nickname');
         const nick = nickInput.value || 'Unnamed Cell';
         localPlayerId = generateId();
-        playerCells = [new Cell(localPlayerId, WORLD_SIZE/2, WORLD_SIZE/2, INITIAL_MASS, '#ff3f3f', nick, true)];
+        playerCells = [new Cell(localPlayerId, WORLD_SIZE/2, WORLD_SIZE/2, CONFIG.INITIAL_MASS, '#ff3f3f', nick, true)];
         document.getElementById('start-screen').style.display = 'none';
         document.getElementById('leaderboard').style.display = 'block';
         document.getElementById('instructions').style.display = 'block';
@@ -176,14 +212,8 @@
         foods.push({ x: Math.random()*WORLD_SIZE, y: Math.random()*WORLD_SIZE, c: COLORS[Math.floor(Math.random()*COLORS.length)], m: 12 });
     }
 
-    /**
-     * PHYSICS ENGINE: COLLISION DETECTION & RESOLUTION
-     * Handles all interactions between cells, food, viruses, and ejected mass.
-     */
     function handleCollisions() {
         const allLivingCells = [...playerCells, ...bots];
-
-        // 1. Food Consumption
         allLivingCells.forEach(c => {
             const r = getRadius(c.mass);
             for(let i=foods.length-1; i>=0; i--) {
@@ -194,7 +224,6 @@
             }
         });
 
-        // 2. Ejected Mass Consumption
         for (let i = ejectedMasses.length - 1; i >= 0; i--) {
             const pellet = ejectedMasses[i];
             for (let j = allLivingCells.length - 1; j >= 0; j--) {
@@ -210,66 +239,46 @@
             }
         }
 
-        // 3. Virus Interactions (Feeding & Explosion)
         allLivingCells.forEach(c => {
             const r = getRadius(c.mass);
             viruses.forEach((v, vIdx) => {
                 const vRadius = getRadius(v.mass);
-                const dist = Math.hypot(c.x - v.x, c.y - v.y);
-                
-                // Cells explode if they eat a virus larger than them or smaller viruses they can't consume
-                if (c.mass > v.mass * 1.15 && dist < r) explodeCell(c);
-
-                // Feeding viruses
+                if (c.mass > v.mass * 1.15 && Math.hypot(c.x - v.x, c.y - v.y) < r) explodeCell(c);
                 for (let i = ejectedMasses.length - 1; i >= 0; i--) {
                     const p = ejectedMasses[i];
                     if (Math.hypot(p.x - v.x, p.y - v.y) < vRadius) {
                         v.mass += p.mass; ejectedMasses.splice(i, 1);
-                        // Virus splits if threshold reached
-                        if (v.mass >= VIRUS_SPLIT_THRESHOLD) {
-                            viruses.push({ x: v.x, y: v.y, mass: VIRUS_MASS });
-                            v.mass = VIRUS_MASS;
+                        if (v.mass >= CONFIG.VIRUS_SPLIT_THRESHOLD) {
+                            viruses.push({ x: v.x, y: v.y, mass: CONFIG.VIRUS_MASS });
+                            v.mass = CONFIG.VIRUS_MASS;
                         }
                     }
                 }
             });
         });
 
-        // 4. Cell-to-Cell Interactions (Merge & Eat)
         for(let i=allLivingCells.length-1; i>=0; i--) {
             for(let j=allLivingCells.length-1; j>=0; j--) {
                 if (i === j) continue;
                 let a = allLivingCells[i], b = allLivingCells[j];
                 if (!a || !b) continue;
-                
-                const dist = Math.hypot(a.x - b.x, a.y - b.y);
-                const ra = getRadius(a.mass), rb = getRadius(b.mass);
-
-                // Intra-player merging
+                const dist = Math.hypot(a.x - b.x, a.y - b.y), ra = getRadius(a.mass), rb = getRadius(b.mass);
                 if (a.playerId === b.playerId) {
                     if (a.mergeTimer <= 0 && b.mergeTimer <= 0 && dist < Math.min(ra, rb)) {
                         a.mass += b.mass;
                         if (b.isPlayer) playerCells.splice(playerCells.indexOf(b), 1); else bots.splice(bots.indexOf(b), 1);
                         return;
                     }
-                    // Apply magnetic "soft pull" when pieces are close to merging
                     if (a.mergeTimer < 2 && b.mergeTimer < 2 && dist < ra + rb) {
-                        const angle = Math.atan2(b.y - a.y, b.x - a.x);
-                        const pull = 150; // Attraction force
+                        const angle = Math.atan2(b.y - a.y, b.x - a.x), pull = 150;
                         a.vx += Math.cos(angle) * pull; a.vy += Math.sin(angle) * pull;
                     }
-                } 
-                // Eating opponents
-                else {
+                } else {
                     if (a.mass > b.mass * 1.25 && dist < ra - rb * 0.5) {
                         a.mass += b.mass; a.growthBoost = 1;
                         if (b.isPlayer) playerCells.splice(playerCells.indexOf(b), 1); else bots.splice(bots.indexOf(b), 1);
-                        // Respawn bots
                         if (!b.isPlayer && !bots.some(bot => bot.playerId === b.playerId)) {
-                            setTimeout(() => {
-                                const newBotId = generateId();
-                                bots.push(new Cell(newBotId, Math.random()*WORLD_SIZE, Math.random()*WORLD_SIZE, INITIAL_MASS, COLORS[Math.floor(Math.random()*COLORS.length)], BOT_NAMES[Math.floor(Math.random()*BOT_NAMES.length)]));
-                            }, 5000);
+                            setTimeout(() => { if(bots.length < CONFIG.BOT_COUNT) bots.push(new Cell(generateId(), Math.random()*WORLD_SIZE, Math.random()*WORLD_SIZE, CONFIG.INITIAL_MASS, COLORS[Math.floor(Math.random()*COLORS.length)], BOT_NAMES[Math.floor(Math.random()*BOT_NAMES.length)])); }, 5000);
                         }
                     }
                 }
@@ -277,12 +286,9 @@
         }
     }
 
-    /**
-     * Forces a cell to split into multiple fragments upon hitting a virus.
-     */
     function explodeCell(cell) {
         const currentPieces = cell.isPlayer ? playerCells.length : bots.filter(b => b.playerId === cell.playerId).length;
-        const canCreate = MAX_PIECES - currentPieces;
+        const canCreate = CONFIG.MAX_PIECES - currentPieces;
         if (canCreate <= 0) return;
         const numNew = Math.min(canCreate, 15);
         const fragmentMass = cell.mass / (numNew + 1);
@@ -290,101 +296,71 @@
         for(let i=0; i<numNew; i++) {
             const angle = Math.random() * Math.PI * 2;
             const piece = new Cell(cell.playerId, cell.x, cell.y, fragmentMass, cell.color, cell.name, cell.isPlayer);
-            piece.boostX = Math.cos(angle) * SPLIT_FORCE; piece.boostY = Math.sin(angle) * SPLIT_FORCE;
-            piece.mergeTimer = MERGE_BASE + Math.pow(cell.mass, 0.35) * MERGE_FACTOR;
+            piece.boostX = Math.cos(angle) * CONFIG.VIRUS_FRAGMENT_IMPULSE; piece.boostY = Math.sin(angle) * CONFIG.VIRUS_FRAGMENT_IMPULSE;
+            piece.mergeTimer = CONFIG.MERGE_BASE + Math.pow(cell.mass, CONFIG.MERGE_EXPONENT) * CONFIG.MERGE_FACTOR;
             cell.mergeTimer = piece.mergeTimer;
             if (cell.isPlayer) playerCells.push(piece); else bots.push(piece);
         }
     }
 
-    /**
-     * MAIN UPDATE LOOP
-     * Processes input, camera movement, bot logic, and physics.
-     */
     function update() {
         const now = Date.now();
-        const dt = Math.min((now - lastTime) / 1000, 0.1);
+        let dt = Math.min((now - lastTime) / 1000, 0.1);
         lastTime = now;
+
+        if (CONFIG.DEBUG_PAUSE && stepRemaining <= 0) return;
+        if (stepRemaining > 0) { dt = CONFIG.FIXED_STEP; stepRemaining--; }
         if (!gameStarted) return;
 
-        // Camera Logic: Follow the center of all player pieces
         if (playerCells.length > 0) {
             let avgX = 0, avgY = 0, totalM = 0;
             playerCells.forEach(c => { avgX += c.x; avgY += c.y; totalM += c.mass; });
             camera.x += (avgX / playerCells.length - camera.x) * 0.1;
             camera.y += (avgY / playerCells.length - camera.y) * 0.1;
-            const targetZoom = 2.1 / Math.sqrt(totalM);
-            camera.zoom += (targetZoom - camera.zoom) * 0.08;
+            const targetZoom = (CONFIG.CAMERA_Z0 * 1.5) / Math.sqrt(totalM);
+            camera.zoom += (targetZoom - camera.zoom) * CONFIG.CAMERA_SMOOTH_ZOOM;
         } else {
             gameStarted = false; document.getElementById('start-screen').style.display = 'flex';
         }
 
         const worldMouseX = (mouseX - canvas.width/2) / camera.zoom + camera.x;
         const worldMouseY = (mouseY - canvas.height/2) / camera.zoom + camera.y;
-
-        // Update player pieces
         playerCells.forEach(c => c.update(dt, worldMouseX, worldMouseY));
 
-        /**
-         * BOT AI LOGIC: PERCEPTION & SCORING MODEL
-         * Bots analyze nearby entities to decide whether to flee, chase, or eat.
-         */
         bots.forEach(b => {
-            const DETECT = 1200;
+            const DETECT = CONFIG.BOT_DETECT_RADIUS;
             let threats = [], preys = [], foodClusters = [];
-            foods.forEach(f => {
-                const d = Math.hypot(b.x - f.x, b.y - f.y);
-                if (d < DETECT) foodClusters.push({ f, d });
-            });
+            foods.forEach(f => { const d = Math.hypot(b.x - f.x, b.y - f.y); if (d < DETECT) foodClusters.push({ f, d }); });
             [...playerCells, ...bots].forEach(other => {
                 if (other.playerId === b.playerId) return;
                 const d = Math.hypot(b.x - other.x, b.y - other.y);
                 if (d > DETECT) return;
-                if (other.mass > b.mass * 1.15) threats.push({ other, d });
-                else if (other.mass < b.mass * 0.85) preys.push({ other, d });
+                if (other.mass > b.mass * CONFIG.BOT_THREAT_RATIO) threats.push({ other, d });
+                else if (other.mass < b.mass * CONFIG.BOT_PREY_RATIO) preys.push({ other, d });
             });
 
-            // Priority 1: Flee from larger threats
             if (threats.length) {
                 let vx = 0, vy = 0, totalW = 0;
-                threats.forEach(t => { 
-                    const w = t.other.mass / Math.max(1, t.d); 
-                    vx += (b.x - t.other.x) * w; vy += (b.y - t.other.y) * w; totalW += w; 
-                });
+                threats.forEach(t => { const w = (t.other.mass / Math.max(1, t.d)) * CONFIG.W_THREAT; vx += (b.x - t.other.x) * w; vy += (b.y - t.other.y) * w; totalW += w; });
                 b.targetX = b.x + (vx/totalW); b.targetY = b.y + (vy/totalW);
-            } 
-            // Priority 2: Chase smaller cells (Prey)
-            else if (preys.length) {
+            } else if (preys.length) {
                 preys.sort((a,b2) => (a.other.mass / a.d) - (b2.other.mass / b2.d));
                 b.targetX = preys[0].other.x; b.targetY = preys[0].other.y;
-            } 
-            // Priority 3: Graze on food pellets
-            else if (foodClusters.length) {
+            } else if (foodClusters.length) {
                 foodClusters.sort((a,b2) => a.d - b2.d);
                 b.targetX = foodClusters[0].f.x; b.targetY = foodClusters[0].f.y;
-            } 
-            // Priority 4: Random wandering
-            else {
+            } else {
                 if (!b.wanderTimer || b.wanderTimer <= 0) { b.wanderTimer = 1 + Math.random()*3; b.wanderAngle = Math.random()*Math.PI*2; }
                 b.wanderTimer -= dt; b.targetX = b.x + Math.cos(b.wanderAngle)*300; b.targetY = b.y + Math.sin(b.wanderAngle)*300;
             }
             b.update(dt, b.targetX, b.targetY);
         });
 
-        // Update Ejected Mass physics
-        ejectedMasses.forEach((m, i) => {
-            m.x += m.vx * dt; m.y += m.vy * dt;
-            const decay = Math.pow(0.05, dt); m.vx *= decay; m.vy *= decay;
-        });
-
+        ejectedMasses.forEach(m => { m.x += m.vx * dt; m.y += m.vy * dt; const decay = Math.pow(0.05, dt); m.vx *= decay; m.vy *= decay; });
         handleCollisions();
         document.getElementById('score').innerText = `Score: ${Math.floor(playerCells.reduce((a,b) => a + b.mass, 0))}`;
     }
 
-    /**
-     * RENDER LOOP
-     * Draws the world grid, entities, and UI.
-     */
     function render() {
         canvas.width = window.innerWidth; canvas.height = window.innerHeight;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -393,22 +369,15 @@
         ctx.scale(camera.zoom, camera.zoom);
         ctx.translate(-camera.x, -camera.y);
 
-        // Draw background grid
         ctx.strokeStyle = '#ddd'; ctx.lineWidth = 2;
         for(let i=0; i<=WORLD_SIZE; i+=100) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, WORLD_SIZE); ctx.stroke(); }
         for(let i=0; i<=WORLD_SIZE; i+=100) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(WORLD_SIZE, i); ctx.stroke(); }
 
         foods.forEach(f => { ctx.beginPath(); ctx.arc(f.x, f.y, 10, 0, Math.PI*2); ctx.fillStyle = f.c; ctx.fill(); });
-        
-        // Draw spiky viruses
         viruses.forEach(v => {
-            ctx.beginPath(); for(let i=0; i<20; i++) {
-                const angle = (i/20) * Math.PI*2, r = (i%2===0) ? 100 : 90;
-                ctx.lineTo(v.x + Math.cos(angle)*r, v.y + Math.sin(angle)*r);
-            }
+            ctx.beginPath(); for(let i=0; i<20; i++) { const angle = (i/20) * Math.PI*2, r = (i%2===0) ? getRadius(v.mass) : getRadius(v.mass)*0.9; ctx.lineTo(v.x + Math.cos(angle)*r, v.y + Math.sin(angle)*r); }
             ctx.closePath(); ctx.fillStyle = '#33ff33'; ctx.fill(); ctx.strokeStyle = '#22cc22'; ctx.lineWidth = 5; ctx.stroke();
         });
-
         ejectedMasses.forEach(m => { ctx.beginPath(); ctx.arc(m.x, m.y, getRadius(m.mass), 0, Math.PI*2); ctx.fillStyle = m.c; ctx.fill(); });
         bots.forEach(b => b.draw());
         playerCells.forEach(c => c.draw());
@@ -416,65 +385,104 @@
         updateLeaderboard();
     }
 
-    /**
-     * Aggregates mass by player identity and updates the UI.
-     */
     function updateLeaderboard() {
         const players = {};
-        [...playerCells, ...bots].forEach(c => {
-            if (!players[c.playerId]) players[c.playerId] = { name: c.name, mass: 0, isPlayer: c.isPlayer };
-            players[c.playerId].mass += c.mass;
-        });
+        [...playerCells, ...bots].forEach(c => { if (!players[c.playerId]) players[c.playerId] = { name: c.name, mass: 0, isPlayer: c.isPlayer }; players[c.playerId].mass += c.mass; });
         const sorted = Object.values(players).sort((a,b) => b.mass - a.mass).slice(0, 8);
-        document.getElementById('lb-content').innerHTML = sorted.map((p, i) => 
-            `<div style="color:${p.isPlayer ? '#000' : '#666'}">${i+1}. ${p.name} (${Math.floor(p.mass)})</div>`
-        ).join("");
+        document.getElementById('lb-content').innerHTML = sorted.map((p, i) => `<div style="color:${p.isPlayer ? '#000' : '#666'}">${i+1}. ${p.name} (${Math.floor(p.mass)})</div>`).join("");
     }
 
-    // Input Handlers
     window.onmousemove = (e) => { mouseX = e.clientX; mouseY = e.clientY; };
     window.onkeydown = (e) => {
         if (!gameStarted) return;
-        // SPLIT ACTION (Space)
         if (e.code === 'Space') {
-            const count = playerCells.length; if (count >= MAX_PIECES) return;
+            const count = playerCells.length; if (count >= CONFIG.MAX_PIECES) return;
             const worldMX = (mouseX - canvas.width/2) / camera.zoom + camera.x, worldMY = (mouseY - canvas.height/2) / camera.zoom + camera.y;
             for (let i = 0; i < count; i++) {
                 let c = playerCells[i];
-                if (c.mass >= MIN_SPLIT_MASS && playerCells.length < MAX_PIECES) {
+                if (c.mass >= CONFIG.MIN_SPLIT_MASS && playerCells.length < CONFIG.MAX_PIECES) {
                     const angle = Math.atan2(worldMY - c.y, worldMX - c.x);
                     c.mass /= 2;
                     const piece = new Cell(c.playerId, c.x, c.y, c.mass, c.color, c.name, true);
-                    piece.boostX = Math.cos(angle) * SPLIT_FORCE; piece.boostY = Math.sin(angle) * SPLIT_FORCE;
-                    const mTime = MERGE_BASE + Math.pow(c.mass, 0.35) * MERGE_FACTOR;
+                    piece.boostX = Math.cos(angle) * CONFIG.SPLIT_FORCE; piece.boostY = Math.sin(angle) * CONFIG.SPLIT_FORCE;
+                    const mTime = CONFIG.MERGE_BASE + Math.pow(c.mass, CONFIG.MERGE_EXPONENT) * CONFIG.MERGE_FACTOR;
                     c.mergeTimer = mTime; piece.mergeTimer = mTime;
                     playerCells.push(piece);
                 }
             }
         }
-        // EJECT MASS (W)
         if (e.code === 'KeyW') {
             playerCells.forEach(c => {
                 if (c.mass > 120) {
                     const worldMX = (mouseX - canvas.width/2) / camera.zoom + camera.x, worldMY = (mouseY - canvas.height/2) / camera.zoom + camera.y;
                     const angle = Math.atan2(worldMY - c.y, worldMX - c.x);
-                    c.mass -= EJECT_LOSS;
-                    ejectedMasses.push({ x: c.x + Math.cos(angle) * getRadius(c.mass) * 1.1, y: c.y + Math.sin(angle) * getRadius(c.mass) * 1.1, vx: Math.cos(angle) * 600, vy: Math.sin(angle) * 600, mass: EJECT_MASS, c: c.color });
+                    c.mass -= CONFIG.EJECT_LOSS;
+                    ejectedMasses.push({ x: c.x + Math.cos(angle) * getRadius(c.mass) * 1.1, y: c.y + Math.sin(angle) * getRadius(c.mass) * 1.1, vx: Math.cos(angle) * CONFIG.EJECT_SPEED, vy: Math.sin(angle) * CONFIG.EJECT_SPEED, mass: CONFIG.EJECT_MASS, c: c.color });
                 }
             });
         }
     };
 
     /**
-     * Pre-game setup.
+     * DEV PANEL IMPLEMENTATION
      */
-    function init() {
-        for(let i=0; i<FOOD_COUNT; i++) spawnFood();
-        for(let i=0; i<VIRUS_COUNT; i++) viruses.push({ x: Math.random()*WORLD_SIZE, y: Math.random()*WORLD_SIZE, mass: VIRUS_MASS });
-        for(let i=0; i<12; i++) {
-            const id = generateId();
-            bots.push(new Cell(id, Math.random()*WORLD_SIZE, Math.random()*WORLD_SIZE, INITIAL_MASS, COLORS[i%COLORS.length], BOT_NAMES[i % BOT_NAMES.length]));
+    function toggleDevPanel() { const p = document.getElementById('dev-panel'); p.style.display = p.style.display === 'block' ? 'none' : 'block'; }
+    function togglePause() { CONFIG.DEBUG_PAUSE = !CONFIG.DEBUG_PAUSE; saveConfig(); updateDevUI(); }
+    function stepFrames(n) { stepRemaining = n; }
+    function resetDefaults() { CONFIG = { ...DEFAULT_CONFIG }; saveConfig(); location.reload(); }
+    function saveConfig() { localStorage.setItem('cellio_config', JSON.stringify(CONFIG)); }
+
+    function updateDevUI() {
+        const container = document.getElementById('dev-controls');
+        container.innerHTML = '';
+        const groups = {
+            "Physics": ["BASE_SPEED", "ACCELERATION", "DECAY_RATE"],
+            "Split/Merge": ["MIN_SPLIT_MASS", "SPLIT_FORCE", "MERGE_BASE", "MERGE_FACTOR", "MERGE_EXPONENT"],
+            "Virus": ["VIRUS_COUNT", "VIRUS_MASS", "VIRUS_SPLIT_THRESHOLD"],
+            "Bots": ["BOT_COUNT", "BOT_DETECT_RADIUS", "W_THREAT", "W_PREY", "W_FOOD"],
+            "Debug": ["DEBUG_SHOW_VECTORS", "DEBUG_SHOW_TARGETS"]
+        };
+
+        for (let group in groups) {
+            const gDiv = document.createElement('div'); gDiv.className = 'dev-group';
+            gDiv.innerHTML = `<strong>${group}</strong>`;
+            groups[group].forEach(key => {
+                const row = document.createElement('div'); row.className = 'dev-row';
+                const label = document.createElement('label'); label.innerText = key.toLowerCase();
+                const input = document.createElement('input');
+                if (typeof CONFIG[key] === 'boolean') {
+                    input.type = 'checkbox'; input.checked = CONFIG[key];
+                    input.onchange = (e) => { CONFIG[key] = e.target.checked; saveConfig(); };
+                } else {
+                    input.type = 'number'; input.value = CONFIG[key];
+                    input.onchange = (e) => { 
+                        CONFIG[key] = parseFloat(e.target.value); 
+                        if (key === 'BOT_COUNT') syncBotCount();
+                        if (key === 'VIRUS_COUNT') syncVirusCount();
+                        if (key === 'VIRUS_MASS') viruses.forEach(v => v.mass = CONFIG.VIRUS_MASS);
+                        saveConfig(); 
+                    };
+                }
+                row.appendChild(label); row.appendChild(input); gDiv.appendChild(row);
+            });
+            container.appendChild(gDiv);
         }
+        document.getElementById('pause-btn').innerText = CONFIG.DEBUG_PAUSE ? 'Resume' : 'Pause';
+    }
+
+    function syncBotCount() {
+        while (bots.length > CONFIG.BOT_COUNT) bots.pop();
+        while (bots.length < CONFIG.BOT_COUNT) bots.push(new Cell(generateId(), Math.random()*WORLD_SIZE, Math.random()*WORLD_SIZE, CONFIG.INITIAL_MASS, COLORS[bots.length%COLORS.length], BOT_NAMES[bots.length % BOT_NAMES.length]));
+    }
+    function syncVirusCount() {
+        while (viruses.length > CONFIG.VIRUS_COUNT) viruses.pop();
+        while (viruses.length < CONFIG.VIRUS_COUNT) viruses.push({ x: Math.random()*WORLD_SIZE, y: Math.random()*WORLD_SIZE, mass: CONFIG.VIRUS_MASS });
+    }
+
+    function init() {
+        for(let i=0; i<1000; i++) spawnFood();
+        syncVirusCount(); syncBotCount();
+        updateDevUI();
     }
 
     function run() { update(); render(); requestAnimationFrame(run); }
